@@ -1,0 +1,13 @@
+sqlite_vault_verify_runtime_user:
+sqlite_vault_verify_service_name: sqlite-vault-verify
+sqlite_vault_verify_binary:
+sqlite_vault_verify_endpoint:
+sqlite_vault_verify_region:
+sqlite_vault_verify_bucket:
+sqlite_vault_verify_access_key:
+sqlite_vault_verify_secret_key:
+sqlite_vault_verify_passphrase:
+sqlite_vault_verify_alias:
+sqlite_vault_verify_prefix:
+sqlite_vault_verify_max_age: "26h"
+sqlite_vault_verify_uptime_kuma_url:

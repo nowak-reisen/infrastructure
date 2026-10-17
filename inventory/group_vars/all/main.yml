@@ -1,0 +1,26 @@
+---
+# Repo-wide defaults.
+timezone: Europe/Berlin
+
+# Root of this repo, so playbooks can reference sibling checkouts and role
+# files.
+infrastructure_root: "{{ inventory_dir }}/.."
+
+# Application source checkouts for deploys that build from source. Override
+# these with -e on a local run; the defaults point at the sibling clones in the
+# workspace layout (github.com/{speisehof/caterbill,suhlig/sqlite-vault,
+# speisehof/www,nowak-reisen/www}).
+caterbill_source: "{{ infrastructure_root }}/../../speisehof/caterbill"
+sqlite_vault_source: "{{ infrastructure_root }}/../../suhlig/sqlite-vault"
+speisehof_source: "{{ infrastructure_root }}/../../speisehof/www"
+nowak_reisen_source: "{{ infrastructure_root }}/../../nowak-reisen/www"
+
+# Unattended upgrades (role hifis.toolkit.unattended_upgrades, pulled in via
+# suhlig.foundation.main). Setting this REPLACES the role's per-distribution
+# defaults, so it must carry the security origin for every OS in use. neon is
+# Ubuntu; the Debian and Tailscale origins are kept for completeness.
+unattended_origins_patterns:
+  - "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu"
+  - "origin=Debian,codename=${distro_codename},label=Debian-Security"
+  - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
+  - "origin=Tailscale,codename=${distro_codename},label=Tailscale"

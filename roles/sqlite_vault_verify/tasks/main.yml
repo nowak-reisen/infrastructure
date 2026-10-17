@@ -1,0 +1,40 @@
+- name: sqlite-vault-verify binary is installed
+  ansible.builtin.copy:
+    src: "{{ sqlite_vault_verify_binary }}"
+    dest: /usr/local/bin/sqlite-vault-verify
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [sqlite-vault-verify, binary]
+
+- name: wrapper script path is resolved
+  ansible.builtin.set_fact:
+    sqlite_vault_verify_wrapper_script: "{{ role_path }}/files/sqlite-vault-verify-wrapper.sh"
+  tags: [sqlite-vault-verify, systemd]
+
+- name: systemd service and timer are configured
+  ansible.builtin.include_role:
+    name: uhlig-it.simple_systemd_service
+  vars:
+    program:
+      name: "{{ sqlite_vault_verify_service_name }}"
+      description: "SQLite vault backup verification for {{ sqlite_vault_verify_stage }}"
+      runtime_user: "{{ sqlite_vault_verify_runtime_user }}"
+      binary: "{{ sqlite_vault_verify_wrapper_script }}"
+      parameters:
+        - -endpoint "{{ sqlite_vault_verify_endpoint }}"
+        - -region "{{ sqlite_vault_verify_region }}"
+        - -bucket "{{ sqlite_vault_verify_bucket }}"
+        - -alias "{{ sqlite_vault_verify_alias }}"
+        - -prefix "{{ sqlite_vault_verify_prefix }}"
+        - -max-age "{{ sqlite_vault_verify_max_age }}"
+      environment:
+        SQLITE_VAULT_VERIFY_ACCESS_KEY: "{{ sqlite_vault_verify_access_key }}"
+        SQLITE_VAULT_VERIFY_SECRET_KEY: "{{ sqlite_vault_verify_secret_key }}"
+        SQLITE_VAULT_VERIFY_PASSPHRASE: "{{ sqlite_vault_verify_passphrase }}"
+        SQLITE_VAULT_VERIFY_UPTIME_KUMA_URL: "{{ sqlite_vault_verify_uptime_kuma_url }}"
+      timer:
+        - "OnCalendar=*-*-* 05:00:00 UTC"
+        - Persistent=true
+        - AccuracySec=1min
+  tags: [sqlite-vault-verify, systemd]

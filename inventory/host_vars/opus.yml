@@ -1,0 +1,6 @@
+---
+ansible_user: suhlig
+
+# uhlig-it home server. Only the caterbill backup-verification service
+# (sqlite-vault-verify) is deployed here; the host itself is provisioned by
+# uhlig-it/infrastructure.

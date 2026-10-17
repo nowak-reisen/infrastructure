@@ -1,0 +1,5 @@
+---
+# neon is reached as root (see group_vars/servers.yml).
+# It hosts speisehof.de, nowak-reisen.de and caterbill. The uhlig.it, kehrkraft
+# and uhlig.social services that share the host are managed by
+# uhlig-it/infrastructure.

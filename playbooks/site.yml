@@ -1,0 +1,10 @@
+---
+# Runs the neon baseline and the two static sites. The caterbill deploy and its
+# backup verification need a `stage` (demo|prod), so they are not part of the
+# default run — invoke them explicitly:
+#
+#   ansible-playbook playbooks/services/caterbill.yml -e stage=prod
+#   ansible-playbook playbooks/services/sqlite-vault-verify.yml -e stage=prod --ask-vault-pass
+- import_playbook: machines/neon.yml
+- import_playbook: services/speisehof.yml
+- import_playbook: services/nowak-reisen.yml

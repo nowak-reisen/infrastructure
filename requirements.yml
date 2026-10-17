@@ -1,0 +1,30 @@
+---
+# Every collection and role used anywhere in this repo.
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-galaxy role install -r requirements.yml
+collections:
+  # Installed from git, not Galaxy: the roles the playbooks use are newer than
+  # the published 1.2.2. Pulls in thorian93.main and hifis.toolkit as
+  # dependencies.
+  - name: https://github.com/suhlig/foundation.git
+    type: git
+    version: main
+  - name: thorian93.main
+  - name: ansible.posix
+  - name: community.general
+
+roles:
+  - src: https://github.com/uhlig-it/ansible-role-simple-systemd-service
+    name: uhlig-it.simple_systemd_service
+    version: master
+  - src: https://github.com/suhlig/ansible-role-caddy
+    name: suhlig.caddy
+    version: master
+  - src: https://github.com/suhlig/ansible-role-caddy_reverse_proxy
+    name: suhlig.caddy_reverse_proxy
+    version: master
+  - src: https://github.com/suhlig/ansible-role-caddy_file_server
+    name: suhlig.caddy_file_server
+    version: master
+  - src: ansistrano.deploy

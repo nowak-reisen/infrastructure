@@ -1,0 +1,27 @@
+---
+# neon server baseline, moved here from uhlig-it/infrastructure (neon is
+# nowak-reisen's server).
+#
+# Created manually via the Hetzner console (2022); it is NOT managed by
+# Terraform. Caddy is installed on the host and its per-domain site files are
+# written by the service playbooks; it is not managed here. Tailscale is
+# configured by uhlig-it/infrastructure's fleet play, which still covers neon.
+- name: neon server baseline
+  hosts: neon
+  collections:
+    - thorian93.main
+    - suhlig.foundation
+  roles:
+    - role: thorian93.main.upgrade
+      become: true
+    - role: thorian93.main.journald
+      become: true
+    - role: thorian93.main.common
+      vars:
+        common_configure_timezone: true
+        common_timezone: "{{ timezone }}"
+      become: true
+    - role: thorian93.main.ntp
+      become: true
+    - role: suhlig.foundation.main
+      become: true

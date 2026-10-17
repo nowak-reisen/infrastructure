@@ -1,0 +1,280 @@
+---
+# Deploy caterbill (the speisehof billing app) to neon.
+# Source: github.com/speisehof/caterbill-deployment (now retired).
+#
+# Requires -e stage=demo|prod. The stage selects the entry in the vault's
+# top-level `caterbill` map and names the service (caterbill-<stage>).
+- name: caterbill
+  hosts: neon
+  vars:
+    goos: linux
+    goarch: amd64
+    go_cgo_enabled: 0
+    go_build_version: "{{ stage }}"
+    service_name: "caterbill-{{ stage }}"
+    settings: "{{ caterbill[stage] }}"
+    # Writable state goes here since the 2026-09-05 role rebuild: the service
+    # runs as a nologin system user whose working directory is data_dir.
+    data_dir: /var/lib/{{ service_name }}
+  pre_tasks:
+    - name: Go modules are downloaded
+      local_action:
+        module: ansible.builtin.command
+        cmd: go mod download
+        args:
+          chdir: "{{ caterbill_source }}"
+      become: false
+      tags: [caterbill, go, modules]
+    - name: caterbill release binary is built
+      local_action:
+        module: ansible.builtin.command
+        cmd: >-
+          make release GOOS={{ goos }} GOARCH={{ goarch }}
+        args:
+          chdir: "{{ caterbill_source }}"
+      become: false
+      tags: [caterbill, go, build]
+    - name: Binary output path is determined
+      local_action:
+        module: ansible.builtin.command
+        cmd: make output-path GOOS={{ goos }} GOARCH={{ goarch }}
+        args:
+          chdir: "{{ caterbill_source }}"
+      register: output_path_result
+      become: false
+      tags: [caterbill, binary, path]
+    - name: Path to binary is set
+      ansible.builtin.set_fact:
+        binary_path: "{{ output_path_result.stdout }}"
+      tags: [caterbill, binary, path]
+    # =========================================================================
+    # Migration from the old per-user systemd service (deployed by the role's
+    # pre-2026-09-05 mode) to the hardened system service: the state moves
+    # from the former interactive account's home into /var/lib/<service>.
+    # The block is a no-op once migrated (the account's home then points at
+    # the data dir and the old paths no longer exist). See
+    # MIGRATION.markdown in the role for the full procedure; the old user
+    # account and its per-user units stay in place until the new service has
+    # survived a reboot, then can be decommissioned manually.
+    # =========================================================================
+    - name: Runtime user account is inspected (home of the old deployment)
+      ansible.builtin.command: "getent passwd {{ settings.runtime_user }}"
+      register: runtime_user_passwd_entry
+      changed_when: false
+      failed_when: false
+      tags: [caterbill, migration]
+    - name: Old deployment paths are determined
+      ansible.builtin.set_fact:
+        old_runtime_user_home: "{{ runtime_user_passwd_entry.stdout.split(':')[5] if runtime_user_passwd_entry.stdout else '' }}"
+      tags: [caterbill, migration]
+    - name: Old deployment paths and unit are inspected
+      when: old_runtime_user_home | length > 0
+      block:
+        - name: Old state directory is inspected
+          ansible.builtin.stat:
+            path: "{{ old_runtime_user_home }}/.local/state/{{ service_name }}"
+          register: old_state_dir_stat
+        - name: Old share directory is inspected
+          ansible.builtin.stat:
+            path: "{{ old_runtime_user_home }}/.local/share/{{ service_name }}"
+          register: old_share_dir_stat
+        - name: Old user service unit is inspected
+          ansible.builtin.stat:
+            path: "{{ old_runtime_user_home }}/.config/systemd/user/{{ service_name }}.service"
+          register: old_user_unit_stat
+    - name: Target system service unit is inspected
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ service_name }}.service"
+      register: system_unit_stat
+      tags: [caterbill, migration]
+    - name: Data directory and fixtures directory are inspected
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ data_dir }}"
+        - "{{ data_dir }}/fixtures"
+      register: data_dirs_stat
+      tags: [caterbill, migration]
+    - name: Old deployment state is moved to the data directory
+      when:
+        - old_runtime_user_home | length > 0
+        - >-
+          ((old_state_dir_stat is defined and old_state_dir_stat.stat.exists)
+           and not data_dirs_stat.results[0].stat.exists)
+          or ((old_share_dir_stat is defined and old_share_dir_stat.stat.exists)
+              and not data_dirs_stat.results[1].stat.exists)
+      tags: [caterbill, migration]
+      block:
+        - name: Old user service is stopped (if it is still deployed)
+          become: true
+          become_user: "{{ settings.runtime_user }}"
+          ansible.builtin.systemd:
+            name: "{{ service_name }}.service"
+            scope: user
+            state: stopped
+          when: old_user_unit_stat is defined and old_user_unit_stat.stat.exists
+        - name: System service is stopped (if it is already deployed)
+          become: true
+          ansible.builtin.systemd:
+            name: "{{ service_name }}.service"
+            state: stopped
+          when: system_unit_stat.stat.exists
+        - name: Data directory exists for a moved share directory only
+          become: true
+          ansible.builtin.file:
+            path: "{{ data_dir }}"
+            state: directory
+            mode: "0750"
+            owner: "{{ settings.runtime_user }}"
+            group: "{{ settings.runtime_user }}"
+          when:
+            - old_state_dir_stat is defined and not old_state_dir_stat.stat.exists
+            - old_share_dir_stat is defined and old_share_dir_stat.stat.exists
+            - not data_dirs_stat.results[0].stat.exists
+        - name: Old state directory is moved into place
+          become: true
+          ansible.builtin.command: mv "{{ old_runtime_user_home }}/.local/state/{{ service_name }}" "{{ data_dir }}"
+          when: old_state_dir_stat is defined and old_state_dir_stat.stat.exists and not data_dirs_stat.results[0].stat.exists
+        - name: Old share directory is moved into the data directory
+          become: true
+          ansible.builtin.command: mv "{{ old_runtime_user_home }}/.local/share/{{ service_name }}" "{{ data_dir }}/fixtures"
+          when: old_share_dir_stat is defined and old_share_dir_stat.stat.exists and not data_dirs_stat.results[1].stat.exists
+    # =========================================================================
+    # Demo database reset + fixtures (demo stage only, NEVER prod)
+    #
+    # Running this playbook with stage=demo wipes the demo database here (before
+    # the service role restarts the server) and then — in post_tasks, after the
+    # server is up — loads the demo fixtures from the app checkout. The
+    # destructive steps are strictly limited to stage == "demo" and use exact
+    # file paths (never globs or recursive deletes) so that copies of the prod
+    # database (e.g. dated subdirectories) stay put.
+    # =========================================================================
+    - name: Demo database is reset
+      when: stage == "demo"
+      tags: [caterbill, fixtures]
+      block:
+        - name: Safety check that the demo stage is in effect
+          ansible.builtin.assert:
+            that:
+              - stage == "demo"
+            quiet: true
+            fail_msg: "Refusing to reset the database for stage '{{ stage }}'. Database reset and fixture loading are only supported for the demo stage."
+        - name: Demo service is stopped (so no process keeps the old database open)
+          become: true
+          ansible.builtin.systemd:
+            name: "{{ service_name }}.service"
+            state: stopped
+          when: system_unit_stat.stat.exists
+        - name: Demo database files are removed (exact paths only)
+          become: true
+          ansible.builtin.file:
+            path: "{{ data_dir }}/caterbill-{{ stage }}.db{{ item }}"
+            state: absent
+          loop:
+            - ""
+            - "-wal"
+            - "-shm"
+  tasks:
+    - name: spool directory exists
+      file:
+        path: "{{ data_dir }}/spool"
+        state: directory
+        mode: "0755"
+        owner: "{{ settings.runtime_user }}"
+        group: "{{ settings.runtime_user }}"
+      tags: [caterbill, spool, directory]
+  roles:
+    - role: uhlig-it.simple_systemd_service
+      become: true
+      vars:
+        program:
+          name: "{{ service_name }}"
+          description: "caterbill for {{ settings.hostname }}"
+          runtime_user: "{{ settings.runtime_user }}"
+          binary: "{{ caterbill_source }}/{{ binary_path }}"
+          data_dir: "{{ data_dir }}"
+          parameters:
+            - --address localhost:"{{ settings.port }}"
+          environment:
+            STAGE: "{{ stage }}"
+            DB_URL: "sqlite:{{ data_dir }}/caterbill-{{ stage }}.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(3000)&_pragma=foreign_keys(ON)"
+            TYPST_BIN_PATH: /usr/local/bin/typst0.15.1
+            TYPST_SPOOL_DIR: "{{ data_dir }}/spool"
+            FORWARDEMAIL_API_KEY: "{{ settings.mailer.forwardemail_api_key }}"
+            CATERBILL_BACKUP_S3_ENDPOINT: "{{ settings.backup.s3_endpoint }}"
+            CATERBILL_BACKUP_S3_REGION: "{{ settings.backup.s3_region }}"
+            CATERBILL_BACKUP_S3_ACCESS_KEY_ID: "{{ settings.backup.s3_access_key_id }}"
+            CATERBILL_BACKUP_S3_SECRET_ACCESS_KEY: "{{ settings.backup.s3_secret_access_key }}"
+            CATERBILL_BACKUP_S3_BUCKET_NAME: "{{ settings.backup.s3_bucket_name }}"
+            CATERBILL_BACKUP_PASSPHRASE: "{{ settings.backup.passphrase }}"
+      tags: [caterbill, systemd, service]
+    - role: suhlig.caddy_reverse_proxy
+      vars:
+        caddy_domain: "{{ settings.hostname }}"
+        caddy_port: "{{ settings.port | int }}"
+        caddy_basicauth:
+          irisno: "$2a$14$FSaiyr1WgcXMFxdz24CowOm25Gyc.Rt3M1SYU4zibvpcd93SphgxC"
+          suhlig: "$2a$14$FfykZvMWa8LuMwwKBC8WEO3ES9E6419wFhuhqNikX1RzS/kxsjPkK"
+      tags: [ caddy, https, letsencrypt, proxy ]
+  post_tasks:
+    - name: Demo fixtures are applied
+      when: stage == "demo"
+      tags: [caterbill, fixtures]
+      block:
+        - name: sqlite3 is installed on the host
+          become: true
+          ansible.builtin.package:
+            name: sqlite3
+            state: present
+
+        - name: Demo fixtures directory exists
+          become: true
+          ansible.builtin.file:
+            path: "{{ data_dir }}/fixtures"
+            state: directory
+            owner: "{{ settings.runtime_user }}"
+            group: "{{ settings.runtime_user }}"
+            mode: "0750"
+
+        - name: Demo fixture SQL files are copied to the service user
+          become: true
+          ansible.builtin.copy:
+            src: "{{ caterbill_source }}/fixtures/{{ item }}"
+            dest: "{{ data_dir }}/fixtures/{{ item }}"
+            owner: "{{ settings.runtime_user }}"
+            group: "{{ settings.runtime_user }}"
+            mode: "0640"
+          loop:
+            - demo-master-data.sql
+            - demo-billing.sql
+
+        - name: Demo service is ready before the fixtures are applied
+          ansible.builtin.wait_for:
+            host: localhost
+            port: "{{ settings.port }}"
+            timeout: 90
+            state: started
+
+        - name: Demo fixtures are applied (master data first, then billing)
+          become: true
+          become_user: "{{ settings.runtime_user }}"
+          ansible.builtin.shell:
+            cmd: |
+              set -e
+              sqlite3 -cmd "PRAGMA busy_timeout=10000" "{{ data_dir }}/caterbill-{{ stage }}.db" < demo-master-data.sql
+              sqlite3 -cmd "PRAGMA busy_timeout=10000" "{{ data_dir }}/caterbill-{{ stage }}.db" < demo-billing.sql
+            chdir: "{{ data_dir }}/fixtures"
+
+        - name: Demo fixture summary is read back from the database
+          become: true
+          become_user: "{{ settings.runtime_user }}"
+          ansible.builtin.command: >-
+            sqlite3 "{{ data_dir }}/caterbill-{{ stage }}.db"
+            "SELECT (SELECT count(*) FROM accounts) || ' accounts, ' || (SELECT count(*) FROM guests) || ' guests, ' ||
+            (SELECT count(*) FROM invoices) || ' invoices'"
+          register: fixtures_summary
+          changed_when: false
+
+        - name: Demo fixture summary
+          ansible.builtin.debug:
+            msg: "Demo database now contains: {{ fixtures_summary.stdout }}"

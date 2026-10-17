@@ -1,0 +1,53 @@
+---
+# Verify the daily caterbill SQLite backup in object storage, once per day on
+# opus, reporting to an Uptime Kuma push monitor.
+# Source: github.com/speisehof/caterbill-deployment (now retired).
+#
+# Deploy explicitly (not part of site.yml) with -e stage=demo|prod.
+- name: sqlite vault backup verification
+  hosts: sqlite_vault_verify
+  become: true
+  vars:
+    settings: "{{ sqlite_vault_verify[stage] }}"
+    runtime_user: "{{ settings.runtime_user }}"
+  pre_tasks:
+    - name: sqlite-vault-verify binary is built
+      local_action:
+        module: ansible.builtin.command
+        cmd: make release GOOS=linux GOARCH=amd64
+        args:
+          chdir: "{{ sqlite_vault_source }}"
+      become: false
+      tags: [sqlite-vault-verify, build]
+    - name: path to sqlite-vault-verify binary is determined
+      local_action:
+        module: ansible.builtin.command
+        cmd: make output-path GOOS=linux GOARCH=amd64
+        args:
+          chdir: "{{ sqlite_vault_source }}"
+      become: false
+      register: sqlite_vault_verify_output_path
+      tags: [sqlite-vault-verify, build]
+    - name: path to sqlite-vault-verify binary is set
+      ansible.builtin.set_fact:
+        sqlite_vault_verify_binary_path: "{{ sqlite_vault_source }}/{{ sqlite_vault_verify_output_path.stdout }}"
+      tags: [sqlite-vault-verify, build]
+  roles:
+    - role: sqlite_vault_verify
+      become: true
+      vars:
+        sqlite_vault_verify_stage: "{{ stage }}"
+        sqlite_vault_verify_runtime_user: "{{ runtime_user }}"
+        sqlite_vault_verify_service_name: "sqlite-vault-verify-{{ stage }}"
+        sqlite_vault_verify_binary: "{{ sqlite_vault_verify_binary_path }}"
+        sqlite_vault_verify_endpoint: "{{ settings.endpoint }}"
+        sqlite_vault_verify_region: "{{ settings.region }}"
+        sqlite_vault_verify_bucket: "{{ settings.bucket }}"
+        sqlite_vault_verify_access_key: "{{ settings.access_key }}"
+        sqlite_vault_verify_secret_key: "{{ settings.secret_key }}"
+        sqlite_vault_verify_passphrase: "{{ settings.passphrase }}"
+        sqlite_vault_verify_alias: "{{ settings.alias }}"
+        sqlite_vault_verify_prefix: "{{ settings.prefix }}"
+        sqlite_vault_verify_max_age: "{{ settings.max_age }}"
+        sqlite_vault_verify_uptime_kuma_url: "{{ settings.uptime_kuma_push_url }}"
+      tags: [sqlite-vault-verify, deploy]
