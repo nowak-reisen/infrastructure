@@ -41,17 +41,33 @@ One vaulted file, `inventory/group_vars/all/secrets.yml`, holds every secret. It
 
 ## Commits And Identity
 
-Commits to this repo are made as **Aishe Drechsler** (aishe.drechsler@speisehof.de), signed with the SSH key `~/.ssh/identities/aidrex/id_ed25519`.
+Commits and pushes in this repo are made as **Aishe Drechsler** (aishe.drechsler@speisehof.de), using the SSH key `~/.ssh/identities/aidrex/id_ed25519`. GitHub resolves that key to the `aidrechs` account, so pushes are attributed to Aishe, not to `suhlig`.
 
-`~/.gitconfig.local` maps `github.com/nowak-reisen/**` and `github.com/speisehof/**` to `~/git/github.com/nowak-reisen/.gitconfig` (name, email, `core.sshCommand`, `commit.gpgsign`), but that `includeIf` matches the main clone's `.git` directory only — it does not match a wtg worktree's gitdir. Inside a workspace worktree, set the identity explicitly:
+Identity is selected per org via `hasconfig` includeIf rules in `~/.gitconfig.local`:
 
-```command
-$ git config user.name "Aishe Drechsler"
-$ git config user.email "aishe.drechsler@speisehof.de"
-$ git config core.sshCommand "ssh -o IdentitiesOnly=yes -i ~/.ssh/identities/aidrex/id_ed25519"
-$ git config commit.gpgsign false
+```ini
+[includeIf "hasconfig:remote.*.url:git@github.com:nowak-reisen/**"]
+    path = ~/git/github.com/nowak-reisen/.gitconfig
+[includeIf "hasconfig:remote.*.url:git@github.com:speisehof/**"]
+    path = ~/git/github.com/nowak-reisen/.gitconfig
 ```
 
+URL-based matching works in the main clone and in every worktree, wherever it lives — no per-worktree setup. `~/git/github.com/nowak-reisen/.gitconfig` carries Aishe's `user.name`/`user.email`, `commit.gpgsign = false`, and this `core.sshCommand`:
+
+```ini
+[core]
+    sshCommand = "ssh -F /dev/null -o IdentitiesOnly=yes -o UseKeychain=yes -o AddKeysToAgent=yes -o StrictHostKeyChecking=accept-new -i /Users/suhlig/.ssh/identities/aidrex/id_ed25519"
+```
+
+The `-F /dev/null` is load-bearing: `~/.ssh/config` sets a default `IdentityFile` for Steffen's key, and `-i`/`IdentitiesOnly=yes` do not drop it, so without it every push offers both keys and GitHub authenticates as `suhlig`.
+
+`gh` resolves its own identity via the wrapper `~/bin/gh` (stowed from `suhlig/dotfiles`), which sets `GH_CONFIG_DIR=~/.config/gh-aidrechs` for `nowak-reisen`/`speisehof`, matching on the origin URL or an explicit `-R`/`--repo`.
+
+The key is passphrase-protected; unlock it into the macOS keychain once:
+
+```sh
+ssh-add --apple-use-keychain ~/.ssh/identities/aidrex/id_ed25519
+```
 ## Provenance
 
 Consolidated from `speisehof/caterbill-deployment` (retired) and from the `speisehof`, `nowak-reisen` and `neon` pieces of `uhlig-it/infrastructure`.
